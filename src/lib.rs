@@ -110,6 +110,10 @@ impl Rope {
             Rope::join(left, right)
         })
     }
+    /// Append a string to the Rope, returning a new instance and leaving the original unchanged
+    pub fn append(&self, value: &str) -> Rope {
+        Rope::join(self.clone(), Rope::from_str(value))
+    }
 }
 impl Clone for Rope {
     fn clone(&self) -> Rope {
@@ -179,4 +183,7 @@ fn test_rope_operations() {
 
     let rope2 = rope.insert(10, "(and really very clever) ").unwrap();
     assert_eq!(rope2.to_string(), "The quick (and really very clever) brown fox jumps over the tiny wooden fence!");
+
+    let rope = rope.append(" One fish two fish, red fish blue fish.");
+    assert_eq!(rope.to_string(), "The quick brown fox jumps over the tiny wooden fence! One fish two fish, red fish blue fish.");
 }
