@@ -1,3 +1,5 @@
+#![feature(collections,vec_push_all)]
+
 extern crate unicode_segmentation;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -7,144 +9,209 @@ const SPLIT_LEN: usize = 10;
 const JOIN_LEN: usize = 5;
 const REBALANCE_RATIO: f32 = 1.2;
 
-/// A "base" segment of a Rope.
-/// Usually a String, but could in principle be a large file buffer or similar.
-trait RopeSegment {
-    /// Returns the number of unicode grapheme clusters in this segment
-    fn grapheme_len(&self) -> usize;
-    /// Return Rc pointers to segments before and after the grapheme cluster specified by the `index` parameter
-    fn split(&self, index: usize) -> (Rc<RopeSegment>, Rc<RopeSegment>);
+struct Leaf {
+    base: Rc<String>,
+    start: usize,
+    end: usize,
+    graphemes: usize,
+}
+impl Leaf {
+    /// Create a new Leaf from a String
+    fn from_string(base: &str) -> Leaf {
+        let base = String::from_str(base);
+        let (start, end) = (0, base.len());
+        Leaf::new(Rc::new(base), start, end)
+    }
+    /// Create a new Leaf
+    /// This works like a Slice of the base String; base[start..end]
+    fn new(base: Rc<String>, start: usize, end: usize) -> Leaf {
+        let graphemes = UnicodeSegmentation::graphemes(&base[start..end], true).collect::<Vec<&str>>().len();
+        Leaf { base: base, start: start, end: end, graphemes: graphemes }
+    }
+    /// Split a Leaf after the nth grapheme
+    /// Panics if the grapheme index is out of range
+    fn split(&self, grapheme_index: usize) -> (Rope, Rope) {
+        let byte_index = UnicodeSegmentation::grapheme_indices(&self.base[self.start..self.end], true)
+            .nth(grapheme_index).unwrap().0;
+        let left = Leaf::new(self.base.clone(), self.start, self.start + byte_index);
+        let right = Leaf::new(self.base.clone(), self.start + byte_index, self.end);
+        (Rope::Leaf(left), Rope::Leaf(right))
+    }
+    /// Gets the number of Unicode grapheme clusters in this leaf
+    fn num_graphemes(&self) -> usize {
+        self.graphemes
+    }
+    /// Returns a &str of this Leafs contents
+    fn to_str(&self) -> &str {
+        &self.base[self.start..self.end]
+    }
+}
+impl Clone for Leaf {
+    fn clone(&self) -> Leaf {
+        Leaf { base: self.base.clone(),
+               start: self.start,
+               end: self.end,
+               graphemes: self.graphemes }
+    }
+}
+
+struct Concat {
+    left: Rope,
+    right: Rope,
+    graphemes: usize,
+}
+impl Concat {
+    /// Join two Ropes
+    fn new(left: &Rope, right: &Rope) -> Concat {
+        let graphemes = left.num_graphemes() + right.num_graphemes();
+        Concat { left: left.clone(), right: right.clone(), graphemes: graphemes }
+    }
+
+    /// Split a Rope after the nth grapheme
+    fn split(&self, grapheme_index: usize) -> (Rope, Rope) {
+        // if self is (a, b)
+        // find out if the index is in the left or right child
+        if self.left.num_graphemes() >= grapheme_index {
+            // split a into (a1, a2), return ( a1, concat(a2, b) )
+            let (a1, a2) = self.left.split(grapheme_index);
+            return (a1, Rope::Concat(Rc::new(Concat::new(&a2, &self.right))));
+        } else {
+            // split b into (b1, b2), return ( concat(a, b1), b2 )
+            let (b1, b2) = self.right.split(grapheme_index - self.left.num_graphemes());
+            return (Rope::Concat(Rc::new(Concat::new(&self.left, &b1))), b2);
+        }
+    }
     
+    /// Gets the number of Unicode grapheme clusters in the children of this node
+    fn num_graphemes(&self) -> usize {
+        self.graphemes
+    }
+}
+impl Clone for Concat {
+    fn clone(&self) -> Concat {
+        Concat { left: self.left.clone(),
+                 right: self.right.clone(),
+                 graphemes: self.graphemes }
+    }
 }
 
-enum RopeNode {
-    Leaf(String),
-    Node { len: usize, left: Rc<RopeNode>, right: Rc<RopeNode> },
+enum Rope {
+    Leaf(Leaf),
+    Concat(Rc<Concat>),
 }
-
-impl RopeNode {    
-    pub fn new_leaf(value: String) -> RopeNode {
-        RopeNode::Leaf(value).adjust()
+impl Rope {
+    /// Create a new Rope
+    fn from_string(base: &str) -> Rope {
+        Rope::Leaf(Leaf::from_string(base))
     }
-    pub fn push_str(self, value: String) -> RopeNode {
-        let l = self.len() + value.len();
-        RopeNode::Node { len: l, left: Rc::new(self), right: Rc::new(RopeNode::new_leaf(value)) }
-    }
-    fn split(&self, index: usize) -> (RopeNode, RopeNode) {
-        use RopeNode::*;
-
+    /// Gets the number of Unicode grapheme clusters in the children of this node
+    fn num_graphemes(&self) -> usize {
         match *self {
-            Leaf(ref s) => {
-                let len = s.len();
-                let left = s[..len].to_string();
-                let right = s[len..].to_string();
-                (RopeNode::new_leaf(left), RopeNode::new_leaf(right))
-            },
-            Node { len, ref left, ref right } => {
-                let left_len = left.len();
-                let right_len = right.len();
-                if index < left_len {
-                    let (a, b) = left.split(index);
-                    (a, RopeNode::join(Rc::new(b), right.clone()))
-                } else {
-                    let (b, c) = right.split(index-left_len);
-                    (RopeNode::join(left.clone(), Rc::new(b)), c)
-                }
+            Rope::Leaf(ref leaf) => leaf.num_graphemes(),
+            Rope::Concat(ref concat) => concat.num_graphemes(),
+        }
+    }
+    /// Split a Rope after the nth grapheme
+    fn split(&self, grapheme_index: usize) -> (Rope, Rope) {
+        match *self {
+            Rope::Leaf(ref leaf) => leaf.split(grapheme_index),
+            Rope::Concat(ref concat) => concat.split(grapheme_index),
+        }
+    }
+    /// Collect the pieces of this Rope into a continuous String
+    fn to_string(&self) -> String {
+        let mut buf = String::with_capacity(self.num_graphemes());
+
+        fn str_parts<'a>(root: &'a Rope) -> Vec<&'a str> {
+            let mut v = vec![];
+            match *root {
+                Rope::Leaf(ref leaf) => {
+                    v.push(leaf.to_str());
+                },
+                Rope::Concat(ref concat) => {
+                    v.push_all(&str_parts(&concat.left));
+                    v.push_all(&str_parts(&concat.right));
+                },
             }
+            v
+        }
+        for part in str_parts(self).iter() {
+            buf.push_str(part);
         }
         
+        buf
     }
-    fn join(left: Rc<RopeNode>, right: Rc<RopeNode>) -> RopeNode {
-        RopeNode::Node { len: left.len() + right.len(), left: left.clone(), right: right.clone() }
+    /// Join two pieces into a Rope
+    fn join(left: &Rope, right: &Rope) -> Rope {
+        Rope::Concat(Rc::new(Concat::new(left, right)))
     }
-    fn adjust(self) -> RopeNode {
-        use RopeNode::*;
-
-        let l = self.len();
-        match self {
-            Leaf(s) => {
-                if l > SPLIT_LEN {
-                    let split = l / 2;
-                    let left = s[0..split].to_string();
-                    let right = s[split..].to_string();
-                    Node { len: l,
-                           left: Rc::new(RopeNode::new_leaf(left).adjust()),
-                           right: Rc::new(RopeNode::new_leaf(right).adjust()) }
-                } else {
-                    Leaf(s)
-                }
-            },
-            Node { len, left, right } => {
-                if len < JOIN_LEN {
-                    let mut s = String::with_capacity(len);
-                    left.append_to(&mut s);
-                    right.append_to(&mut s);
-                    Leaf(s)
-                } else {
-                    Node { len: len, left: left, right: right }
-                }
-            },
-        }
+    /// Insert a string into a Rope by splitting and joining nodes
+    /// Returns a new Rope, leaving the original unchanged
+    fn insert(&self, grapheme_index: usize, value: &str) -> Rope {
+        let (left, right) = self.split(grapheme_index);
+        let left = Rope::join(&left, &Rope::from_string(value));
+        Rope::join(&left, &right)
     }
-    fn append_to(&self, buffer: &mut String) {
+    
+}
+impl Clone for Rope {
+    fn clone(&self) -> Rope {
         match *self {
-            RopeNode::Leaf(ref s) => {
-                buffer.push_str(s);
-            },
-            RopeNode::Node { len, ref left, ref right } => {
-                left.append_to(buffer);
-                right.append_to(buffer);
-            }
+            Rope::Leaf(ref leaf) => Rope::Leaf(leaf.clone()),
+            Rope::Concat(ref concat) => Rope::Concat(concat.clone()),
         }
-    }
-    pub fn len(&self) -> usize {
-        match *self {
-            RopeNode::Leaf(ref s) => s.len(),
-            RopeNode::Node{ len, .. } => len
-        }
-    }
-    pub fn to_string(&self) -> String {
-        let mut buffer = String::with_capacity(self.len());
-        self.append_to(&mut buffer);
-        buffer
     }
 }
 
-fn walk(depth: usize, rope: &RopeNode) {
-    for i in 0..depth*2 {
-        print!(" ");
-    }
-    match *rope {
-        RopeNode::Leaf(ref s) => println!(" Leaf ({}): {:?}", s.len(), s),
-        RopeNode::Node { len, ref left, ref right } => {
-            println!(" Node ({}):", len);
-            walk(depth+1, &*left);
-            walk(depth+1, &*right);
-        }
-    }
+/// Count the number of unicode extended grapheme clusters in a string
+/// This is O(n)
+fn count_clusters(s: &str) -> usize {
+    UnicodeSegmentation::graphemes(s, true).collect::<Vec<&str>>().len()
 }
 
 #[test]
-fn it_works() {
-    let base = "the quick brown fox jumped over the lazy dog.";
+fn test_count_clusters() {
+    // 11 bytes, 3 grapheme clusters
+    let s = "a̐éö̲";
+    assert_eq!(s.len(), 11);
+    assert_eq!(count_clusters(s), 3);
+}
 
-    let rope = RopeNode::new_leaf(base.to_string());
-    assert_eq!(rope.to_string(), base.to_string());
+#[test]
+fn test_create_leaf() {
+    let base = "a̐éö̲";
+    let leaf = Leaf::from_string(base);
+    assert_eq!(leaf.num_graphemes(), 3);
+}
 
-    println!("---");
-    println!("{}", rope.to_string());
-    walk(0, &rope);
-    
-    let rope = rope.adjust();
-    println!("---");
-    println!("{}", rope.to_string());
-    walk(0, &rope);
+#[test]
+fn test_split_leaf() {
+    let base = "a̐éö̲a̐éö̲";
+    let leaf = Leaf::from_string(base);
+    let (left, right) = leaf.split(3);
+    assert_eq!(left.num_graphemes(), right.num_graphemes());
+    assert_eq!(left.to_string(), "a̐éö̲");
+}
 
-    assert_eq!(rope.to_string(), base.to_string());
+#[test]
+fn test_create_rope() {
+    let rope = Rope::from_string("The quick brown fox jumps over the lazy dog.");
 
-    let rope = rope.push_str("  Foo bar baz baz bar foo.".to_string());
-    println!("---");
-    println!("{}", rope.to_string());
-    walk(0, &rope);
+    assert_eq!(rope.num_graphemes(), 44);
+    assert_eq!(rope.to_string(), "The quick brown fox jumps over the lazy dog.");
+}
 
+#[test]
+fn test_rope_operations() {
+    let rope = Rope::from_string("The quick brown fox jumps over the lazy dog.");
+
+    let (left, right) = rope.split(22);
+    assert_eq!(left.to_string(), "The quick brown fox ju");
+    assert_eq!(right.to_string(), "mps over the lazy dog.");
+
+    let rope = Rope::join(&left, &Rope::from_string("mps over the tiny wooden fence!"));
+    assert_eq!(rope.to_string(), "The quick brown fox jumps over the tiny wooden fence!");
+
+    let rope2 = rope.insert(10, "(and really very clever) ");
+    assert_eq!(rope2.to_string(), "The quick (and really very clever) brown fox jumps over the tiny wooden fence!");
 }
