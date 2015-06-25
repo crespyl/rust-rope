@@ -114,6 +114,14 @@ impl Rope {
     pub fn append(&self, value: &str) -> Rope {
         Rope::join(self.clone(), Rope::from_str(value))
     }
+    /// Remove a substring range from the Rope
+    pub fn delete(&self, start_grapheme: usize, num_graphemes: usize) -> Option<Rope> {
+        self.split(start_grapheme).map(|(head, middle)| {
+            middle.split(num_graphemes).map(|(_, tail)| {
+                Rope::join(head.clone(), tail.clone())
+            })
+        }).unwrap()
+    }
 }
 impl Clone for Rope {
     fn clone(&self) -> Rope {
@@ -139,6 +147,35 @@ fn count_grapheme_clusters(s: &str) -> usize {
 fn grapheme_byte_index(base: &str, nth_grapheme: usize) -> Option<usize> {
     UnicodeSegmentation::grapheme_indices(base, true)
         .nth(nth_grapheme).map(|(i, _)| i)
+}
+
+#[cfg(test)]
+fn to_string_debug(root: &Rope) -> String {
+    let mut buf = String::with_capacity(root.num_graphemes());
+
+    fn str_parts<'a>(root: &'a Rope) -> Vec<&'a str> {
+        let mut v = vec![];
+        match *root {
+            Rope::Leaf { ref base, start, end, .. } => {
+                v.push( "<" );
+                v.push( &base[start..end] );
+                v.push( ">" );
+            },
+            Rope::Concat { ref left, ref right, .. } => {
+                v.push( "(" );
+                v.push_all(&str_parts(&left));
+                v.push( "," );
+                v.push_all(&str_parts(&right));
+                v.push( ")" );
+            },
+        }
+        v
+    }
+    for part in str_parts(root).iter() {
+        buf.push_str(part);
+    }
+    
+    buf
 }
 
 #[test]
@@ -178,12 +215,20 @@ fn test_rope_operations() {
     assert_eq!(left.to_string(), "The quick brown fox ju");
     assert_eq!(right.to_string(), "mps over the lazy dog.");
 
-    let rope = Rope::join(left, Rope::from_str("mps over the tiny wooden fence!"));
-    assert_eq!(rope.to_string(), "The quick brown fox jumps over the tiny wooden fence!");
+    let rope2 = Rope::join(left, Rope::from_str("mps over the tiny wooden fence!"));
+    assert_eq!(rope2.to_string(), "The quick brown fox jumps over the tiny wooden fence!");
 
-    let rope2 = rope.insert(10, "(and really very clever) ").unwrap();
-    assert_eq!(rope2.to_string(), "The quick (and really very clever) brown fox jumps over the tiny wooden fence!");
+    let rope3 = rope2.insert(10, "(and really very clever) ").unwrap();
+    assert_eq!(rope3.to_string(), "The quick (and really very clever) brown fox jumps over the tiny wooden fence!");
 
-    let rope = rope.append(" One fish two fish, red fish blue fish.");
-    assert_eq!(rope.to_string(), "The quick brown fox jumps over the tiny wooden fence! One fish two fish, red fish blue fish.");
+    let rope4 = rope2.append(" One fish two fish, red fish blue fish.");
+    assert_eq!(rope4.to_string(), "The quick brown fox jumps over the tiny wooden fence! One fish two fish, red fish blue fish.");
+
+    let rope5 = rope4.delete(4, 6).expect("a").delete(14, 6).expect("b").insert(13, " hops").expect("c");
+        
+    println!("{}\n{}\n", rope.to_string(), to_string_debug(&rope));
+    println!("{}\n{}\n", rope2.to_string(), to_string_debug(&rope2));
+    println!("{}\n{}\n", rope3.to_string(), to_string_debug(&rope3));
+    println!("{}\n{}\n", rope4.to_string(), to_string_debug(&rope4));
+    println!("{}\n{}\n", rope5.to_string(), to_string_debug(&rope5));
 }
