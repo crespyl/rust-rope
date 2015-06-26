@@ -21,12 +21,23 @@ pub enum Rope {
              graphemes: usize },
 }
 impl Rope {
-    /// Create a new rope leaf
     pub fn from_str(base: &str) -> Rope {
-        let num_graphemes = count_grapheme_clusters(base);
-        Rope::Leaf { base: Rc::new(String::from(base)),
+        let base = String::from(base);
+        let num_graphemes = count_grapheme_clusters(&base);
+        let len = base.len();
+        Rope::Leaf { base: Rc::new(base),
                      start: 0,
-                     end: base.len(),
+                     end: len,
+                     graphemes: num_graphemes }
+    }
+    /// Create a new rope leaf
+    pub fn new<T: Into<String>>(base: T) -> Rope {
+        let base: String = base.into();
+        let len = base.len();
+        let num_graphemes = count_grapheme_clusters(&base);
+        Rope::Leaf { base: Rc::new(base),
+                     start: 0,
+                     end: len,
                      graphemes: num_graphemes }
     }
     /// Gets the number of Unicode grapheme clusters in the children of this node
@@ -113,13 +124,13 @@ impl Rope {
     /// Returns a new Rope, leaving the original unchanged
     pub fn insert(&self, grapheme_index: usize, value: &str) -> Option<Rope> {
         self.split(grapheme_index).map(|(left, right)| {
-            let left = Rope::join(left, Rope::from_str(value));
+            let left = Rope::join(left, Rope::new(value));
             Rope::join(left, right)
         })
     }
     /// Append a string to the Rope, returning a new instance and leaving the original unchanged
     pub fn append(&self, value: &str) -> Rope {
-        Rope::join(self.clone(), Rope::from_str(value))
+        Rope::join(self.clone(), Rope::new(value))
     }
     /// Remove a substring range from the Rope
     pub fn delete(&self, start_grapheme: usize, num_graphemes: usize) -> Option<Rope> {
@@ -233,6 +244,18 @@ impl <'a> std::iter::Iterator for GraphemeIter<'a> {
     }
 }
 
+impl std::convert::Into<Rope> for String {
+    fn into(self) -> Rope {
+        Rope::new(self)
+    }
+}
+
+impl<'a> std::convert::Into<Rope> for &'a str {
+    fn into(self) -> Rope {
+        Rope::new(self)
+    }
+}
+
 /// Count the number of unicode extended grapheme clusters in a string
 /// This is O(n)
 fn count_grapheme_clusters(s: &str) -> usize {
@@ -305,13 +328,15 @@ mod tests {
 
     #[test]
     fn test_create_leaf() {
-        let leaf = Rope::from_str("a̐éö̲");
+        let leaf = Rope::new("a̐éö̲");
+        assert_eq!(leaf.num_graphemes(), 3);
+        let leaf = Rope::new(String::from("abc"));
         assert_eq!(leaf.num_graphemes(), 3);
     }
 
     #[test]
     fn test_split_leaf() {
-        let leaf = Rope::from_str("a̐éö̲a̐éö̲");
+        let leaf = Rope::new("a̐éö̲a̐éö̲");
         let (left, right) = leaf.split(3).unwrap();
         assert_eq!(left.num_graphemes(), right.num_graphemes());
         assert_eq!(left.to_string(), "a̐éö̲");
@@ -319,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_create_rope() {
-        let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.");
+        let rope = Rope::new("The quick brown fox jumps over the lazy dog.");
         assert_eq!(rope.num_graphemes(), 44);
         assert_eq!(rope.to_string(), "The quick brown fox jumps over the lazy dog.");
     }
@@ -335,7 +360,7 @@ mod tests {
             }
         }
 
-        let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.")
+        let rope = Rope::new("The quick brown fox jumps over the lazy dog.")
             .fixup_lengths(2, 4);
         assert_eq!(rope.num_graphemes(), 44);
         assert!(find_max_leaf(&rope) <= 4);
@@ -343,46 +368,46 @@ mod tests {
 
     #[test]
     fn test_index() {
-        let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
+        let leaf = Rope::new("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
         assert_eq!(leaf.get_nth_grapheme(2).unwrap(), "ö̲");
         assert_eq!(&leaf[2], "ö̲");
     }
 
     #[test]
     fn test_iter() {
-        let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
+        let leaf = Rope::new("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
         let x: String = leaf.graphemes().collect();
         assert_eq!(leaf.to_string(), x);
     }
 
     #[test]
     fn test_join() {
-        let left = Rope::from_str("foo");
-        let right = Rope::from_str("bar");
+        let left = Rope::new("foo");
+        let right = Rope::new("bar");
         assert_eq!("foobar", Rope::join(left, right).to_string());
     }
 
     #[test]
     fn test_delete() {
-        let rope = Rope::from_str("fooa̐éö̲bar").delete(3, 3).unwrap();
+        let rope = Rope::new("fooa̐éö̲bar").delete(3, 3).unwrap();
         assert_eq!("foobar", rope.to_string());
     }
 
     #[test]
     fn test_split_end() {
-        let rope = Rope::from_str("abc");
+        let rope = Rope::new("abc");
         assert!(rope.split(3).is_none());
     }
 
     #[test]
     fn test_split_start() {
-        let rope = Rope::from_str("abc");
+        let rope = Rope::new("abc");
         assert!(rope.split(0).is_none());
     }
 
     #[test]
     fn test_fraying() {
-        let (a, b) = Rope::from_str("foo bar baz").split(4).expect("first split");
+        let (a, b) = Rope::new("foo bar baz").split(4).expect("first split");
         let c = Rope::join(a, b);
         assert_eq!(c.to_string(), "foo bar baz");
 
@@ -392,17 +417,26 @@ mod tests {
     }
 
     #[bench]
-    fn bench_create_fixup_1000(b: &mut Bencher) {
+    fn bench_create_1000(b: &mut Bencher) {
         let base: String = ::std::iter::repeat("a").take(1000).collect();
         b.iter(|| {
-            let rope = Rope::from_str(&base).fixup_lengths(100, 200);
+            Rope::from_str(&base);
+        });
+    }
+
+    #[bench]
+    fn bench_fixup_1000(b: &mut Bencher) {
+        let base: String = ::std::iter::repeat("a").take(1000).collect();
+        let rope = Rope::new(base);
+        b.iter(|| {
+            rope.fixup_lengths(100, 200);
         });
     }
 
     #[bench]
     fn bench_index_middle(b: &mut Bencher) {
         let base: String = ::std::iter::repeat("a").take(1000).collect();
-        let rope = Rope::from_str(&base).fixup_lengths(100, 200);
+        let rope = Rope::new(base).fixup_lengths(100, 200);
         b.iter(|| {
             assert_eq!(&rope[250], "a");
         });
@@ -410,20 +444,26 @@ mod tests {
 
     #[bench]
     fn bench_clone(b: &mut Bencher) {
-        let rope = Rope::from_str("foo");
+        let rope = Rope::new("foo");
         b.iter(|| rope.clone() )
     }
 
     #[bench]
     fn bench_join(b: &mut Bencher) {
-        let left = Rope::from_str("foo");
-        let right = Rope::from_str("bar");
+        let left = Rope::new("foo");
+        let right = Rope::new("bar");
         b.iter(|| Rope::join(left.clone(), right.clone()) );
     }
 
     #[bench]
     fn bench_delete(b: &mut Bencher) {
-        let rope = Rope::from_str("foobarbaz");
+        let rope = Rope::new("foobarbaz");
         b.iter(|| rope.delete(3, 3) );
+    }
+
+    #[bench]
+    fn bench_insert(b: &mut Bencher) {
+        let rope = Rope::new("foobaz");
+        b.iter(|| rope.insert(3, "bar") );
     }
 }
