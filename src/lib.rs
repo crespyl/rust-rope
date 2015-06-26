@@ -290,6 +290,14 @@ fn test_count_grapheme_clusters() {
 }
 
 #[test]
+fn test_grapheme_byte_index() {
+    let s = "a̐éö̲";
+    assert_eq!(grapheme_byte_index(s, 0).unwrap(), 0);
+    assert_eq!(grapheme_byte_index(s, 1).unwrap(), 3);
+    assert_eq!(grapheme_byte_index(s, 2).unwrap(), 6);
+}
+
+#[test]
 fn test_create_leaf() {
     let leaf = Rope::from_str("a̐éö̲");
     assert_eq!(leaf.num_graphemes(), 3);
@@ -354,7 +362,8 @@ fn test_delete() {
     assert_eq!("foobar", rope.to_string());
 }
 
-    fn test_split_end() {
+#[test]
+fn test_split_end() {
     let rope = Rope::from_str("abc");
     assert!(rope.split(3).is_none());
 }
