@@ -1,4 +1,6 @@
-#![feature(vec_push_all)]
+#![feature(test, vec_push_all)]
+
+extern crate test;
 
 extern crate unicode_segmentation;
 use unicode_segmentation::UnicodeSegmentation;
@@ -250,37 +252,6 @@ fn nth_grapheme_cluster(base: &str, nth_grapheme: usize) -> Option<&str> {
     UnicodeSegmentation::graphemes(base, true)
         .nth(nth_grapheme)
 }
-
-#[cfg(test)]
-fn to_string_debug(root: &Rope) -> String {
-    let mut buf = String::with_capacity(root.num_graphemes());
-
-    fn str_parts<'a>(root: &'a Rope) -> Vec<&'a str> {
-        let mut v = vec![];
-        match *root {
-            Rope::Leaf { ref base, start, end, .. } => {
-                v.push( "<" );
-                v.push( &base[start..end] );
-                v.push( ">" );
-            },
-            Rope::Concat { ref left, ref right, .. } => {
-                v.push( "(" );
-                v.push_all(&str_parts(&left));
-                v.push( ", " );
-                v.push_all(&str_parts(&right));
-                v.push( ")" );
-            },
-        }
-        v
-    }
-
-    for part in str_parts(root).iter() {
-        buf.push_str(part);
-    }
-
-    buf
-}
-
 #[test]
 fn test_count_grapheme_clusters() {
     // 11 bytes, 3 grapheme clusters
@@ -297,90 +268,162 @@ fn test_grapheme_byte_index() {
     assert_eq!(grapheme_byte_index(s, 2).unwrap(), 6);
 }
 
-#[test]
-fn test_create_leaf() {
-    let leaf = Rope::from_str("a̐éö̲");
-    assert_eq!(leaf.num_graphemes(), 3);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test::Bencher;
 
-#[test]
-fn test_split_leaf() {
-    let leaf = Rope::from_str("a̐éö̲a̐éö̲");
-    let (left, right) = leaf.split(3).unwrap();
-    assert_eq!(left.num_graphemes(), right.num_graphemes());
-    assert_eq!(left.to_string(), "a̐éö̲");
-}
+    #[cfg(test)]
+    fn to_string_debug(root: &Rope) -> String {
+        let mut buf = String::with_capacity(root.num_graphemes());
 
-#[test]
-fn test_create_rope() {
-    let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.");
-    assert_eq!(rope.num_graphemes(), 44);
-    assert_eq!(rope.to_string(), "The quick brown fox jumps over the lazy dog.");
-}
-
-#[test]
-fn test_fixup_lengths() {
-    fn find_max_leaf(root: &Rope) -> usize {
-        let len = root.num_graphemes();
-        if let Rope::Concat { ref left, ref right, .. } = *root {
-            std::cmp::max( find_max_leaf(&*left), find_max_leaf(&*right) )
-        } else {
-            len
+        fn str_parts<'a>(root: &'a Rope) -> Vec<&'a str> {
+            let mut v = vec![];
+            match *root {
+                Rope::Leaf { ref base, start, end, .. } => {
+                    v.push( "<" );
+                    v.push( &base[start..end] );
+                    v.push( ">" );
+                },
+                Rope::Concat { ref left, ref right, .. } => {
+                    v.push( "(" );
+                    v.push_all(&str_parts(&left));
+                    v.push( ", " );
+                    v.push_all(&str_parts(&right));
+                    v.push( ")" );
+                },
+            }
+            v
         }
+
+        for part in str_parts(root).iter() {
+            buf.push_str(part);
+        }
+
+        buf
     }
 
-    let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.")
-        .fixup_lengths(2, 4);
-    assert_eq!(rope.num_graphemes(), 44);
-    assert!(find_max_leaf(&rope) <= 4);
-}
+    #[test]
+    fn test_create_leaf() {
+        let leaf = Rope::from_str("a̐éö̲");
+        assert_eq!(leaf.num_graphemes(), 3);
+    }
 
-#[test]
-fn test_index() {
-    let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
-    assert_eq!(leaf.get_nth_grapheme(2).unwrap(), "ö̲");
-    assert_eq!(&leaf[2], "ö̲");
-}
+    #[test]
+    fn test_split_leaf() {
+        let leaf = Rope::from_str("a̐éö̲a̐éö̲");
+        let (left, right) = leaf.split(3).unwrap();
+        assert_eq!(left.num_graphemes(), right.num_graphemes());
+        assert_eq!(left.to_string(), "a̐éö̲");
+    }
 
-#[test]
-fn test_iter() {
-    let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
-    let x: String = leaf.graphemes().collect();
-    assert_eq!(leaf.to_string(), x);
-}
+    #[test]
+    fn test_create_rope() {
+        let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.");
+        assert_eq!(rope.num_graphemes(), 44);
+        assert_eq!(rope.to_string(), "The quick brown fox jumps over the lazy dog.");
+    }
 
-#[test]
-fn test_join() {
-    let left = Rope::from_str("foo");
-    let right = Rope::from_str("bar");
-    assert_eq!("foobar", Rope::join(left, right).to_string());
-}
+    #[test]
+    fn test_fixup_lengths() {
+        fn find_max_leaf(root: &Rope) -> usize {
+            let len = root.num_graphemes();
+            if let Rope::Concat { ref left, ref right, .. } = *root {
+                ::std::cmp::max( find_max_leaf(&*left), find_max_leaf(&*right) )
+            } else {
+                len
+            }
+        }
 
-#[test]
-fn test_delete() {
-    let rope = Rope::from_str("fooa̐éö̲bar").delete(3, 3).unwrap();
-    assert_eq!("foobar", rope.to_string());
-}
+        let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.")
+            .fixup_lengths(2, 4);
+        assert_eq!(rope.num_graphemes(), 44);
+        assert!(find_max_leaf(&rope) <= 4);
+    }
 
-#[test]
-fn test_split_end() {
-    let rope = Rope::from_str("abc");
-    assert!(rope.split(3).is_none());
-}
+    #[test]
+    fn test_index() {
+        let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
+        assert_eq!(leaf.get_nth_grapheme(2).unwrap(), "ö̲");
+        assert_eq!(&leaf[2], "ö̲");
+    }
 
-#[test]
-fn test_split_start() {
-    let rope = Rope::from_str("abc");
-    assert!(rope.split(0).is_none());
-}
+    #[test]
+    fn test_iter() {
+        let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
+        let x: String = leaf.graphemes().collect();
+        assert_eq!(leaf.to_string(), x);
+    }
 
-#[test]
-fn test_fraying() {
-    let (a, b) = Rope::from_str("foo bar baz").split(4).expect("first split");
-    let c = Rope::join(a, b);
-    assert_eq!(c.to_string(), "foo bar baz");
+    #[test]
+    fn test_join() {
+        let left = Rope::from_str("foo");
+        let right = Rope::from_str("bar");
+        assert_eq!("foobar", Rope::join(left, right).to_string());
+    }
 
-    let (d, e) = c.split(4).expect("second split");
-    let f = Rope::join(d, e);
-    assert_eq!(f.to_string(), "foo bar baz");
+    #[test]
+    fn test_delete() {
+        let rope = Rope::from_str("fooa̐éö̲bar").delete(3, 3).unwrap();
+        assert_eq!("foobar", rope.to_string());
+    }
+
+    #[test]
+    fn test_split_end() {
+        let rope = Rope::from_str("abc");
+        assert!(rope.split(3).is_none());
+    }
+
+    #[test]
+    fn test_split_start() {
+        let rope = Rope::from_str("abc");
+        assert!(rope.split(0).is_none());
+    }
+
+    #[test]
+    fn test_fraying() {
+        let (a, b) = Rope::from_str("foo bar baz").split(4).expect("first split");
+        let c = Rope::join(a, b);
+        assert_eq!(c.to_string(), "foo bar baz");
+
+        let (d, e) = c.split(4).expect("second split");
+        let f = Rope::join(d, e);
+        assert_eq!(f.to_string(), "foo bar baz");
+    }
+
+    #[bench]
+    fn bench_create_fixup_1000(b: &mut Bencher) {
+        let base: String = ::std::iter::repeat("a").take(1000).collect();
+        b.iter(|| {
+            let rope = Rope::from_str(&base).fixup_lengths(100, 200);
+        });
+    }
+
+    #[bench]
+    fn bench_index_middle(b: &mut Bencher) {
+        let base: String = ::std::iter::repeat("a").take(1000).collect();
+        let rope = Rope::from_str(&base).fixup_lengths(100, 200);
+        b.iter(|| {
+            assert_eq!(&rope[250], "a");
+        });
+    }
+
+    #[bench]
+    fn bench_clone(b: &mut Bencher) {
+        let rope = Rope::from_str("foo");
+        b.iter(|| rope.clone() )
+    }
+
+    #[bench]
+    fn bench_join(b: &mut Bencher) {
+        let left = Rope::from_str("foo");
+        let right = Rope::from_str("bar");
+        b.iter(|| Rope::join(left.clone(), right.clone()) );
+    }
+
+    #[bench]
+    fn bench_delete(b: &mut Bencher) {
+        let rope = Rope::from_str("foobarbaz");
+        b.iter(|| rope.delete(3, 3) );
+    }
 }
