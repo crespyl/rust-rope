@@ -14,8 +14,8 @@ pub enum Rope {
            start: usize,
            end: usize,
            graphemes: usize },
-    Concat { left: Rc<Rope>,
-             right: Rc<Rope>,
+    Concat { left: Box<Rope>,
+             right: Box<Rope>,
              graphemes: usize },
 }
 impl Rope {
@@ -35,7 +35,9 @@ impl Rope {
         }
     }
     /// Split a Rope after the nth grapheme
+    /// Returns None if grapheme index is 0 or out of bounds
     pub fn split(&self, grapheme_index: usize) -> Option<(Rope, Rope)> {
+        if grapheme_index == 0 { return None };
         match *self {
             Rope::Leaf { ref base, start, end, .. } => {
                 grapheme_byte_index(&base[start..end], grapheme_index)
@@ -53,19 +55,22 @@ impl Rope {
             },
             Rope::Concat{ ref left, ref right, .. } => {
                 // self is (left, right)
-                if left.num_graphemes() >= grapheme_index {
+                let left_graphemes = left.num_graphemes();
+                if left_graphemes == grapheme_index {
+                    Some((*left.clone(), *right.clone()))
+                } else if left_graphemes > grapheme_index {
                     // split left into (l1, l2), return (l1, concat(l2, right))
                     left.split(grapheme_index).map(|(l1, l2)| {
-                        (l1, Rope::Concat { left: Rc::new(l2.clone()),
+                        (l1, Rope::Concat { left: Box::new(l2.clone()),
                                             right: right.clone(),
                                             graphemes: l2.num_graphemes() + right.num_graphemes() })
                     })
                 } else {
                     // split right into (r1, r2), return (concat(left, r1), r2)
-                    right.split(grapheme_index - left.num_graphemes()).map(|(r1, r2)| {
+                    right.split(grapheme_index - left_graphemes).map(|(r1, r2)| {
                         (Rope::Concat { left: left.clone(),
-                                        right: Rc::new(r1.clone()),
-                                        graphemes: left.num_graphemes() + r1.num_graphemes() },
+                                        right: Box::new(r1.clone()),
+                                        graphemes: left_graphemes + r1.num_graphemes() },
                          r2)
                     })
                 }
@@ -98,8 +103,8 @@ impl Rope {
     /// Join two pieces into a Rope
     pub fn join(left: Rope, right: Rope) -> Rope {
         let graphemes = left.num_graphemes() + right.num_graphemes();
-        Rope::Concat { left: Rc::new(left),
-                       right: Rc::new(right),
+        Rope::Concat { left: Box::new(left),
+                       right: Box::new(right),
                        graphemes: graphemes }
     }
     /// Insert a string into a Rope by splitting and joining nodes
@@ -170,8 +175,8 @@ impl Rope {
                     return Rope::Leaf { base: Rc::new(merged), start: 0, end: len, graphemes: graphemes };
                 } else {
                     // recurse
-                    return Rope::Concat { left: Rc::new(left.fixup_lengths(min_graphemes, max_graphemes)),
-                                          right: Rc::new(right.fixup_lengths(min_graphemes, max_graphemes)),
+                    return Rope::Concat { left: Box::new(left.fixup_lengths(min_graphemes, max_graphemes)),
+                                          right: Box::new(right.fixup_lengths(min_graphemes, max_graphemes)),
                                           graphemes: graphemes };
                 }
             }
@@ -347,4 +352,26 @@ fn test_join() {
 fn test_delete() {
     let rope = Rope::from_str("fooa̐éö̲bar").delete(3, 3).unwrap();
     assert_eq!("foobar", rope.to_string());
+}
+
+    fn test_split_end() {
+    let rope = Rope::from_str("abc");
+    assert!(rope.split(3).is_none());
+}
+
+#[test]
+fn test_split_start() {
+    let rope = Rope::from_str("abc");
+    assert!(rope.split(0).is_none());
+}
+
+#[test]
+fn test_fraying() {
+    let (a, b) = Rope::from_str("foo bar baz").split(4).expect("first split");
+    let c = Rope::join(a, b);
+    assert_eq!(c.to_string(), "foo bar baz");
+
+    let (d, e) = c.split(4).expect("second split");
+    let f = Rope::join(d, e);
+    assert_eq!(f.to_string(), "foo bar baz");
 }
