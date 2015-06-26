@@ -92,7 +92,7 @@ impl Rope {
         for part in str_parts(self).iter() {
             buf.push_str(part);
         }
-        
+
         buf
     }
     /// Join two pieces into a Rope
@@ -122,6 +122,75 @@ impl Rope {
             })
         }).unwrap()
     }
+    /// Return the balance ratio (left.num_graphemes() / right.num_graphemes()) for a given concat node
+    /// If this node is a leaf, returns 1.0
+    pub fn get_balance(&self) -> f32 {
+        match *self {
+            Rope::Leaf { .. } => 1.0,
+            Rope::Concat { ref left, ref right, .. } => left.num_graphemes() as f32 / right.num_graphemes() as f32,
+        }
+    }
+    /// Returns the nth grapheme as an Option<&str>, returns None if the index is out of bounds
+    pub fn get_nth_grapheme<'a>(&'a self, index: usize) -> Option<&'a str> {
+        if index >= self.num_graphemes() {
+            None
+        } else {
+            match *self {
+                Rope::Leaf { ref base, start, end, .. } => {
+                    nth_grapheme_cluster(&base[start..end], index)
+                }
+                Rope::Concat { ref left, ref right, .. } => {
+                    if index < left.num_graphemes() { left.get_nth_grapheme(index) }
+                    else { right.get_nth_grapheme(index - left.num_graphemes()) }
+                }
+            }
+        }
+    }
+    /// Returns a new Rope where all neighboring nodes shorter than min_graphemes are merged and any
+    /// nodes greater than max_graphemes are split
+    /// Panics if max_graphemes is equal to 0, or if min_graphmes is greater than max_graphemes
+    pub fn fixup_lengths(&self, min_graphemes: usize, max_graphemes: usize) -> Rope {
+        assert!(max_graphemes > 0);
+        assert!(min_graphemes <= max_graphemes);
+
+        if self.is_leaf() && self.num_graphemes() > max_graphemes {
+            // split long leafs
+            if let Some((left, right)) = self.split(self.num_graphemes() / 2) {
+                return Rope::join(left.fixup_lengths(min_graphemes, max_graphemes),
+                                  right.fixup_lengths(min_graphemes, max_graphemes));
+            }
+        } else if !self.is_leaf() {
+            if let Rope::Concat { ref left, ref right, graphemes } = *self {
+                if graphemes <= min_graphemes {
+                    // merge short concats
+                    let mut merged = String::with_capacity(graphemes);
+                    merged.push_str(&left.to_string());
+                    merged.push_str(&right.to_string());
+                    let len = merged.len();
+                    return Rope::Leaf { base: Rc::new(merged), start: 0, end: len, graphemes: graphemes };
+                } else {
+                    // recurse
+                    return Rope::Concat { left: Rc::new(left.fixup_lengths(min_graphemes, max_graphemes)),
+                                          right: Rc::new(right.fixup_lengths(min_graphemes, max_graphemes)),
+                                          graphemes: graphemes };
+                }
+            }
+        }
+
+        // nothing to be done
+        return self.clone();
+    }
+    /// Returns true if this node is a Leaf
+    fn is_leaf(&self) -> bool {
+        match *self {
+            Rope::Leaf { .. } => true,
+            _ => false,
+        }
+    }
+    /// Returns an iterator over the graphemes of this Rope
+    pub fn graphemes<'a>(&'a self) -> GraphemeIter<'a> {
+        GraphemeIter { root: self, index: 0 }
+    }
 }
 impl Clone for Rope {
     fn clone(&self) -> Rope {
@@ -136,6 +205,27 @@ impl Clone for Rope {
         }
     }
 }
+impl std::ops::Index<usize> for Rope {
+    type Output = str;
+
+    fn index<'a>(&'a self, _index: usize) -> &'a str {
+        self.get_nth_grapheme(_index).expect("rope index out of bounds")
+    }
+}
+pub struct GraphemeIter<'a> {
+    root: &'a Rope,
+    index: usize,
+}
+impl <'a> std::iter::Iterator for GraphemeIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let res = self.root.get_nth_grapheme(self.index);
+        self.index += 1;
+        res
+    }
+}
+
 /// Count the number of unicode extended grapheme clusters in a string
 /// This is O(n)
 fn count_grapheme_clusters(s: &str) -> usize {
@@ -147,6 +237,13 @@ fn count_grapheme_clusters(s: &str) -> usize {
 fn grapheme_byte_index(base: &str, nth_grapheme: usize) -> Option<usize> {
     UnicodeSegmentation::grapheme_indices(base, true)
         .nth(nth_grapheme).map(|(i, _)| i)
+}
+
+/// Find the nth grapheme in a string
+/// Returns None if the index is out of bounds
+fn nth_grapheme_cluster(base: &str, nth_grapheme: usize) -> Option<&str> {
+    UnicodeSegmentation::graphemes(base, true)
+        .nth(nth_grapheme)
 }
 
 #[cfg(test)]
@@ -164,17 +261,18 @@ fn to_string_debug(root: &Rope) -> String {
             Rope::Concat { ref left, ref right, .. } => {
                 v.push( "(" );
                 v.push_all(&str_parts(&left));
-                v.push( "," );
+                v.push( ", " );
                 v.push_all(&str_parts(&right));
                 v.push( ")" );
             },
         }
         v
     }
+
     for part in str_parts(root).iter() {
         buf.push_str(part);
     }
-    
+
     buf
 }
 
@@ -208,27 +306,45 @@ fn test_create_rope() {
 }
 
 #[test]
-fn test_rope_operations() {
-    let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.");
+fn test_fixup_lengths() {
+    fn find_max_leaf(root: &Rope) -> usize {
+        let len = root.num_graphemes();
+        if let Rope::Concat { ref left, ref right, .. } = *root {
+            std::cmp::max( find_max_leaf(&*left), find_max_leaf(&*right) )
+        } else {
+            len
+        }
+    }
 
-    let (left, right) = rope.split(22).unwrap();
-    assert_eq!(left.to_string(), "The quick brown fox ju");
-    assert_eq!(right.to_string(), "mps over the lazy dog.");
+    let rope = Rope::from_str("The quick brown fox jumps over the lazy dog.")
+        .fixup_lengths(2, 4);
+    assert_eq!(rope.num_graphemes(), 44);
+    assert!(find_max_leaf(&rope) <= 4);
+}
 
-    let rope2 = Rope::join(left, Rope::from_str("mps over the tiny wooden fence!"));
-    assert_eq!(rope2.to_string(), "The quick brown fox jumps over the tiny wooden fence!");
+#[test]
+fn test_index() {
+    let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
+    assert_eq!(leaf.get_nth_grapheme(2).unwrap(), "ö̲");
+    assert_eq!(&leaf[2], "ö̲");
+}
 
-    let rope3 = rope2.insert(10, "(and really very clever) ").unwrap();
-    assert_eq!(rope3.to_string(), "The quick (and really very clever) brown fox jumps over the tiny wooden fence!");
+#[test]
+fn test_iter() {
+    let leaf = Rope::from_str("a̐éö̲a̐éö̲,a̐éö̲a̐éö̲ foo bar baz aéö").fixup_lengths(2, 4);
+    let x: String = leaf.graphemes().collect();
+    assert_eq!(leaf.to_string(), x);
+}
 
-    let rope4 = rope2.append(" One fish two fish, red fish blue fish.");
-    assert_eq!(rope4.to_string(), "The quick brown fox jumps over the tiny wooden fence! One fish two fish, red fish blue fish.");
+#[test]
+fn test_join() {
+    let left = Rope::from_str("foo");
+    let right = Rope::from_str("bar");
+    assert_eq!("foobar", Rope::join(left, right).to_string());
+}
 
-    let rope5 = rope4.delete(4, 6).expect("a").delete(14, 6).expect("b").insert(13, " hops").expect("c");
-        
-    println!("{}\n{}\n", rope.to_string(), to_string_debug(&rope));
-    println!("{}\n{}\n", rope2.to_string(), to_string_debug(&rope2));
-    println!("{}\n{}\n", rope3.to_string(), to_string_debug(&rope3));
-    println!("{}\n{}\n", rope4.to_string(), to_string_debug(&rope4));
-    println!("{}\n{}\n", rope5.to_string(), to_string_debug(&rope5));
+#[test]
+fn test_delete() {
+    let rope = Rope::from_str("fooa̐éö̲bar").delete(3, 3).unwrap();
+    assert_eq!("foobar", rope.to_string());
 }
