@@ -89,22 +89,19 @@ impl Rope {
     pub fn to_string(&self) -> String {
         let mut buf = String::with_capacity(self.num_graphemes());
 
-        fn str_parts<'a>(root: &'a Rope) -> Vec<&'a str> {
-            let mut v = vec![];
+        fn append_to_string(root: &Rope, buf: &mut String) {
             match *root {
                 Rope::Leaf { ref base, start, end, .. } => {
-                    v.push( &base[start..end] );
+                    buf.push_str(&base[start..end]);
                 },
                 Rope::Concat { ref left, ref right, .. } => {
-                    v.push_all(&str_parts(&left));
-                    v.push_all(&str_parts(&right));
+                    append_to_string(left, buf);
+                    append_to_string(right, buf);
                 },
             }
-            v
         }
-        for part in str_parts(self).iter() {
-            buf.push_str(part);
-        }
+
+        append_to_string(self, &mut buf);
 
         buf
     }
@@ -463,5 +460,12 @@ mod tests {
     fn bench_insert(b: &mut Bencher) {
         let rope = Rope::new("foobaz");
         b.iter(|| rope.insert(3, "bar") );
+    }
+
+    #[bench]
+    fn bench_to_string(b: &mut Bencher) {
+        let base: String = ::std::iter::repeat("a").take(1000).collect();
+        let rope = Rope::new(base).fixup_lengths(50, 140);
+        b.iter(|| rope.to_string() );
     }
 }
