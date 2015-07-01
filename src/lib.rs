@@ -11,6 +11,7 @@ use std::rc::Rc;
 // const JOIN_LEN: usize = 5;
 // const REBALANCE_RATIO: f32 = 1.2;
 
+#[derive(Clone)]
 pub enum Rope {
     Leaf { base: Rc<String>,
            start: usize,
@@ -203,19 +204,6 @@ impl Rope {
     /// Returns an iterator over the graphemes of this Rope
     pub fn graphemes<'a>(&'a self) -> GraphemeIter<'a> {
         GraphemeIter { root: self, index: 0 }
-    }
-}
-impl Clone for Rope {
-    fn clone(&self) -> Rope {
-        match *self {
-            Rope::Leaf { ref base, start, end, graphemes } => Rope::Leaf { base: base.clone(),
-                                                                           start: start,
-                                                                           end: end,
-                                                                           graphemes: graphemes },
-            Rope::Concat { ref left, ref right, graphemes } => Rope::Concat { left: left.clone(),
-                                                                              right: right.clone(),
-                                                                              graphemes: graphemes },
-        }
     }
 }
 impl std::ops::Index<usize> for Rope {
