@@ -309,6 +309,15 @@ mod tests {
         buf
     }
 
+    fn create_rope_1k_flat() -> Rope {
+        let base: String = ::std::iter::repeat("a").take(1000).collect();
+        Rope::new(base)
+    }
+
+    fn create_rope_1k() -> Rope {
+        create_rope_1k_flat().fixup_lengths(50, 100)
+    }
+
     #[test]
     fn test_create_leaf() {
         let leaf = Rope::new("a̐éö̲");
@@ -409,8 +418,7 @@ mod tests {
 
     #[bench]
     fn bench_fixup_1000(b: &mut Bencher) {
-        let base: String = ::std::iter::repeat("a").take(1000).collect();
-        let rope = Rope::new(base);
+        let rope = create_rope_1k_flat();
         b.iter(|| {
             rope.fixup_lengths(100, 200);
         });
@@ -418,8 +426,7 @@ mod tests {
 
     #[bench]
     fn bench_index_middle(b: &mut Bencher) {
-        let base: String = ::std::iter::repeat("a").take(1000).collect();
-        let rope = Rope::new(base).fixup_lengths(100, 200);
+        let rope = create_rope_1k();
         b.iter(|| {
             assert_eq!(&rope[250], "a");
         });
@@ -445,15 +452,26 @@ mod tests {
     }
 
     #[bench]
+    fn bench_delete_1000(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| rope.delete(249, 499) );
+    }
+
+    #[bench]
     fn bench_insert(b: &mut Bencher) {
         let rope = Rope::new("foobaz");
         b.iter(|| rope.insert(3, "bar") );
     }
 
     #[bench]
+    fn bench_insert_1000(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| rope.insert(819, "bar") );
+    }
+
+    #[bench]
     fn bench_to_string(b: &mut Bencher) {
-        let base: String = ::std::iter::repeat("a").take(1000).collect();
-        let rope = Rope::new(base).fixup_lengths(50, 140);
+        let rope = create_rope_1k();
         b.iter(|| rope.to_string() );
     }
 }
