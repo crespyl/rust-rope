@@ -17,8 +17,8 @@ pub enum Rope {
            start: usize,
            end: usize,
            graphemes: usize },
-    Concat { left: Rc<Rope>,
-             right: Rc<Rope>,
+    Concat { left: Box<Rope>,
+             right: Box<Rope>,
              graphemes: usize },
 }
 impl Rope {
@@ -71,16 +71,16 @@ impl Rope {
                 // self is (left, right)
                 let left_graphemes = left.num_graphemes();
                 if left_graphemes == grapheme_index {
-                    Some(((**left).clone(), (**right).clone()))
+                    Some((*left.clone(), *right.clone()))
                 } else if left_graphemes > grapheme_index {
                     // split left into (l1, l2), return (l1, concat(l2, right))
                     left.split(grapheme_index).map(|(l1, l2)| {
-                        (l1, Rope::join_rc(Rc::new(l2), right.clone()))
+                        (l1, Rope::join(l2, *right.clone()))
                     })
                 } else {
                     // split right into (r1, r2), return (concat(left, r1), r2)
                     right.split(grapheme_index - left_graphemes).map(|(r1, r2)| {
-                        (Rope::join_rc(left.clone(), Rc::new(r1)), r2)
+                        (Rope::join(*left.clone(), r1), r2)
                     })
                 }
             }
@@ -108,13 +108,9 @@ impl Rope {
     }
     /// Join two pieces into a Rope
     pub fn join(left: Rope, right: Rope) -> Rope {
-        Rope::join_rc(Rc::new(left), Rc::new(right))
-    }
-    /// Join two Rc<Rope> into a Rope
-    pub fn join_rc(left: Rc<Rope>, right: Rc<Rope>) -> Rope {
         let graphemes = left.num_graphemes() + right.num_graphemes();
-        Rope::Concat { left: left,
-                       right: right,
+        Rope::Concat { left: Box::new(left),
+                       right: Box::new(right),
                        graphemes: graphemes }
     }
     /// Insert a string into a Rope by splitting and joining nodes
