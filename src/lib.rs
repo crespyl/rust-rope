@@ -254,7 +254,7 @@ impl<'a> std::convert::Into<Rope> for &'a str {
 /// Count the number of unicode extended grapheme clusters in a string
 /// This is O(n)
 fn count_grapheme_clusters(s: &str) -> usize {
-    UnicodeSegmentation::graphemes(s, true).collect::<Vec<&str>>().len()
+    UnicodeSegmentation::graphemes(s, true).count()
 }
 
 /// Find the byte index of the nth grapheme cluster in a string
