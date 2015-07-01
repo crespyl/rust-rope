@@ -11,6 +11,7 @@ use std::rc::Rc;
 // const JOIN_LEN: usize = 5;
 // const REBALANCE_RATIO: f32 = 1.2;
 
+#[derive(Clone)]
 pub enum Rope {
     Leaf { base: Rc<String>,
            start: usize,
@@ -74,17 +75,12 @@ impl Rope {
                 } else if left_graphemes > grapheme_index {
                     // split left into (l1, l2), return (l1, concat(l2, right))
                     left.split(grapheme_index).map(|(l1, l2)| {
-                        (l1, Rope::Concat { left: Box::new(l2.clone()),
-                                            right: right.clone(),
-                                            graphemes: l2.num_graphemes() + right.num_graphemes() })
+                        (l1, Rope::join(l2, *right.clone()))
                     })
                 } else {
                     // split right into (r1, r2), return (concat(left, r1), r2)
                     right.split(grapheme_index - left_graphemes).map(|(r1, r2)| {
-                        (Rope::Concat { left: left.clone(),
-                                        right: Box::new(r1.clone()),
-                                        graphemes: left_graphemes + r1.num_graphemes() },
-                         r2)
+                        (Rope::join(*left.clone(), r1), r2)
                     })
                 }
             }
@@ -94,22 +90,19 @@ impl Rope {
     pub fn to_string(&self) -> String {
         let mut buf = String::with_capacity(self.num_graphemes());
 
-        fn str_parts<'a>(root: &'a Rope) -> Vec<&'a str> {
-            let mut v = vec![];
+        fn append_to_string(root: &Rope, buf: &mut String) {
             match *root {
                 Rope::Leaf { ref base, start, end, .. } => {
-                    v.push( &base[start..end] );
+                    buf.push_str(&base[start..end]);
                 },
                 Rope::Concat { ref left, ref right, .. } => {
-                    v.push_all(&str_parts(&left));
-                    v.push_all(&str_parts(&right));
+                    append_to_string(left, buf);
+                    append_to_string(right, buf);
                 },
             }
-            v
         }
-        for part in str_parts(self).iter() {
-            buf.push_str(part);
-        }
+
+        append_to_string(self, &mut buf);
 
         buf
     }
@@ -188,9 +181,8 @@ impl Rope {
                     return Rope::Leaf { base: Rc::new(merged), start: 0, end: len, graphemes: graphemes };
                 } else {
                     // recurse
-                    return Rope::Concat { left: Box::new(left.fixup_lengths(min_graphemes, max_graphemes)),
-                                          right: Box::new(right.fixup_lengths(min_graphemes, max_graphemes)),
-                                          graphemes: graphemes };
+                    return Rope::join(left.fixup_lengths(min_graphemes, max_graphemes),
+                                      right.fixup_lengths(min_graphemes, max_graphemes));
                 }
             }
         }
@@ -208,19 +200,6 @@ impl Rope {
     /// Returns an iterator over the graphemes of this Rope
     pub fn graphemes<'a>(&'a self) -> GraphemeIter<'a> {
         GraphemeIter { root: self, index: 0 }
-    }
-}
-impl Clone for Rope {
-    fn clone(&self) -> Rope {
-        match *self {
-            Rope::Leaf { ref base, start, end, graphemes } => Rope::Leaf { base: base.clone(),
-                                                                           start: start,
-                                                                           end: end,
-                                                                           graphemes: graphemes },
-            Rope::Concat { ref left, ref right, graphemes } => Rope::Concat { left: left.clone(),
-                                                                              right: right.clone(),
-                                                                              graphemes: graphemes },
-        }
     }
 }
 impl std::ops::Index<usize> for Rope {
@@ -259,7 +238,7 @@ impl<'a> std::convert::Into<Rope> for &'a str {
 /// Count the number of unicode extended grapheme clusters in a string
 /// This is O(n)
 fn count_grapheme_clusters(s: &str) -> usize {
-    UnicodeSegmentation::graphemes(s, true).collect::<Vec<&str>>().len()
+    UnicodeSegmentation::graphemes(s, true).count()
 }
 
 /// Find the byte index of the nth grapheme cluster in a string
@@ -324,6 +303,15 @@ mod tests {
         }
 
         buf
+    }
+
+    fn create_rope_1k_flat() -> Rope {
+        let base: String = ::std::iter::repeat("a").take(1000).collect();
+        Rope::new(base)
+    }
+
+    fn create_rope_1k() -> Rope {
+        create_rope_1k_flat().fixup_lengths(50, 100)
     }
 
     #[test]
@@ -426,8 +414,7 @@ mod tests {
 
     #[bench]
     fn bench_fixup_1000(b: &mut Bencher) {
-        let base: String = ::std::iter::repeat("a").take(1000).collect();
-        let rope = Rope::new(base);
+        let rope = create_rope_1k_flat();
         b.iter(|| {
             rope.fixup_lengths(100, 200);
         });
@@ -435,8 +422,7 @@ mod tests {
 
     #[bench]
     fn bench_index_middle(b: &mut Bencher) {
-        let base: String = ::std::iter::repeat("a").take(1000).collect();
-        let rope = Rope::new(base).fixup_lengths(100, 200);
+        let rope = create_rope_1k();
         b.iter(|| {
             assert_eq!(&rope[250], "a");
         });
@@ -462,8 +448,26 @@ mod tests {
     }
 
     #[bench]
+    fn bench_delete_1000(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| rope.delete(249, 499) );
+    }
+
+    #[bench]
     fn bench_insert(b: &mut Bencher) {
         let rope = Rope::new("foobaz");
         b.iter(|| rope.insert(3, "bar") );
+    }
+
+    #[bench]
+    fn bench_insert_1000(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| rope.insert(819, "bar") );
+    }
+
+    #[bench]
+    fn bench_to_string(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| rope.to_string() );
     }
 }
