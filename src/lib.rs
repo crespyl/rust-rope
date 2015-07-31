@@ -1,15 +1,17 @@
-#![feature(test, vec_push_all)]
-
+#![feature(test)]
 extern crate test;
-
 extern crate unicode_segmentation;
+
 use unicode_segmentation::UnicodeSegmentation;
 
 use std::rc::Rc;
 
-// const SPLIT_LEN: usize = 10;
-// const JOIN_LEN: usize = 5;
-// const REBALANCE_RATIO: f32 = 1.2;
+/// An immutable binary tree structure for storing and manipulating text.
+///
+/// [Ropes](https://en.wikipedia.org/wiki/Rope_%28data_structure%29) store text
+/// as a binary tree of `Leaf` and `Concat` nodes, supporting O(log n)
+/// implementations of most common operations (insert, delete, concat).  One
+/// drawback is that indexing individual characters also becomes O(log n).
 
 #[derive(Clone)]
 pub enum Rope {
@@ -21,17 +23,19 @@ pub enum Rope {
              right: Box<Rope>,
              graphemes: usize },
 }
+
 impl Rope {
-    pub fn from_str(base: &str) -> Rope {
-        let base = String::from(base);
-        let num_graphemes = count_grapheme_clusters(&base);
-        let len = base.len();
-        Rope::Leaf { base: Rc::new(base),
-                     start: 0,
-                     end: len,
-                     graphemes: num_graphemes }
-    }
-    /// Create a new rope leaf
+
+    /// Create a new `Rope` from a given base.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let rope = Rope::new("abc");
+    /// assert_eq!(rope.to_string(), "abc");
+    /// ```
     pub fn new<T: Into<String>>(base: T) -> Rope {
         let base: String = base.into();
         let len = base.len();
@@ -41,15 +45,40 @@ impl Rope {
                      end: len,
                      graphemes: num_graphemes }
     }
-    /// Gets the number of Unicode grapheme clusters in the children of this node
+
+    /// Gets the number of Unicode grapheme clusters in a Rope.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let s = "a̐éö̲"; // there are 11 bytes in this string, but only three individual characters.
+    /// assert_eq!(s.len(), 11);
+    ///
+    /// let rope = Rope::new(s);
+    /// assert_eq!(rope.num_graphemes(), 3);
+    /// ```
     pub fn num_graphemes(&self) -> usize {
         match *self {
             Rope::Leaf { graphemes, .. } => graphemes,
             Rope::Concat { graphemes, .. } => graphemes,
         }
     }
-    /// Split a Rope after the nth grapheme
-    /// Returns None if grapheme index is 0 or out of bounds
+
+    /// Split a Rope after the nth (1-indexed) grapheme.
+    /// Returns None if the grapheme index is 0 or out of bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let rope = Rope::new("foobar");
+    /// let (left, right) = rope.split(3).unwrap();
+    /// assert_eq!(left.to_string(), "foo");
+    /// assert_eq!(right.to_string(), "bar");
+    /// ```
     pub fn split(&self, grapheme_index: usize) -> Option<(Rope, Rope)> {
         if grapheme_index == 0 { return None };
         match *self {
@@ -86,7 +115,18 @@ impl Rope {
             }
         }
     }
-    /// Collect the pieces of this Rope into a continuous String
+
+    /// Collect the pieces of this Rope into a continuous String.
+    /// This will require a new memory allocation the same size as the entire Rope.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let rope = Rope::new("abc");
+    /// assert_eq!(rope.to_string(), String::from("abc"));
+    /// ```
     pub fn to_string(&self) -> String {
         let mut buf = String::with_capacity(self.num_graphemes());
 
@@ -106,26 +146,78 @@ impl Rope {
 
         buf
     }
-    /// Join two pieces into a Rope
+
+    /// Join two pieces into a Rope.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let x = Rope::new("foo");
+    /// let y = Rope::new("bar");
+    /// let xy = Rope::join(x, y);
+    /// assert_eq!(xy.to_string(), "foobar");
+    /// ```
     pub fn join(left: Rope, right: Rope) -> Rope {
         let graphemes = left.num_graphemes() + right.num_graphemes();
         Rope::Concat { left: Box::new(left),
                        right: Box::new(right),
                        graphemes: graphemes }
     }
-    /// Insert a string into a Rope by splitting and joining nodes
-    /// Returns a new Rope, leaving the original unchanged
-    pub fn insert(&self, grapheme_index: usize, value: &str) -> Option<Rope> {
+
+    /// Insert a string into a Rope, after the nth grapheme.
+    /// Returns a new Rope, leaving the original unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let x = Rope::new("foobaz");
+    /// let y = x.insert(3, "bar").unwrap();
+    /// assert_eq!(y.to_string(), "foobarbaz");
+    /// ```
+    pub fn insert<T: Into<String>>(&self, grapheme_index: usize, value: T) -> Option<Rope> {
         self.split(grapheme_index).map(|(left, right)| {
             let left = Rope::join(left, Rope::new(value));
             Rope::join(left, right)
         })
     }
-    /// Append a string to the Rope, returning a new instance and leaving the original unchanged
-    pub fn append(&self, value: &str) -> Rope {
+
+    /// Convenience method to append a string to the Rope.
+    /// Returns a new instance, leaving the original unchanged.
+    ///
+    /// This is equivalent to the following:
+    /// ```
+    /// let a = Rope::Join(a.clone(), Rope::new(b));
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let x = Rope::new("foo");
+    /// let y = x.append("bar");
+    /// assert_eq!(y.to_string(), "foobar");
+    /// ```
+    pub fn append<T: Into<String>>(&self, value: T) -> Rope {
         Rope::join(self.clone(), Rope::new(value))
     }
-    /// Remove a substring range from the Rope
+
+    /// Remove a substring range from the Rope.
+    /// The range begins with the nth grapheme, and continues for the specified number of graphemes.
+    /// Returns None if the grapheme index is 0 or out of bounds.
+    ///
+    /// # Examples
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let x = Rope::new("foobarbaz");
+    /// let y = x.delete(4, 3).unwrap();
+    /// assert_eq!(y.to_string(), "foobaz");
+    /// ```
     pub fn delete(&self, start_grapheme: usize, num_graphemes: usize) -> Option<Rope> {
         self.split(start_grapheme).map(|(head, middle)| {
             middle.split(num_graphemes).map(|(_, tail)| {
@@ -133,15 +225,61 @@ impl Rope {
             })
         }).unwrap()
     }
-    /// Return the balance ratio (left.num_graphemes() / right.num_graphemes()) for a given concat node
-    /// If this node is a leaf, returns 1.0
+
+    /// Return the balance ratio (left.num_graphemes() / right.num_graphemes()) for a given concat node.
+    /// If this node is a leaf, returns 1.0.
     pub fn get_balance(&self) -> f32 {
         match *self {
             Rope::Leaf { .. } => 1.0,
             Rope::Concat { ref left, ref right, .. } => left.num_graphemes() as f32 / right.num_graphemes() as f32,
         }
     }
-    /// Returns the nth grapheme as an Option<&str>, returns None if the index is out of bounds
+
+    /// Return a balanced version of the Rope, such that each concat node has a roughly equal number of
+    /// graphemes in its left and right children.
+    ///
+    /// # Examples
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let mut rope = Rope::new("Grumpy wizards make ")
+    ///     .append("toxic")
+    ///     .append(" brew for ")
+    ///     .append("the evil Queen")
+    ///     .append(" and ")
+    ///     .append("Jack")
+    ///     .append(".");
+    ///
+    /// // This rope has become very lopsided, and will behave more like
+    /// // a linked list than a binary tree.
+    ///
+    /// assert!(rope.get_balance() > 1.1 || rope.get_balance() < 0.9);
+    ///
+    /// // We can fix this by explicitly rebalancing the rope:
+    /// rope = rope.balance();
+    ///
+    /// assert!(rope.get_balance() < 1.1 && rope.get_balance() > 0.9);
+    /// ```
+    pub fn balance(&self) -> Rope {
+        let balance = self.get_balance();
+        if balance > 1.1 || balance < 0.9 {
+            let split = self.num_graphemes() / 2;
+            if let Some((left, right)) = self.split(split) {
+                return Rope::join(left.balance(), right.balance());
+            }
+        }
+        self.clone()
+    }
+
+    /// Returns the nth grapheme as an Option<&str>, returns None if the index is out of bounds.
+    ///
+    /// # Examples
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let rope = Rope::new("a̐éö̲");
+    /// assert_eq!(rope.get_nth_grapheme(1).unwrap(), "é");
+    /// ```
     pub fn get_nth_grapheme<'a>(&'a self, index: usize) -> Option<&'a str> {
         if index >= self.num_graphemes() {
             None
@@ -157,6 +295,7 @@ impl Rope {
             }
         }
     }
+
     /// Returns a new Rope where all neighboring nodes shorter than min_graphemes are merged and any
     /// nodes greater than max_graphemes are split
     /// Panics if max_graphemes is equal to 0, or if min_graphmes is greater than max_graphemes
@@ -190,6 +329,7 @@ impl Rope {
         // nothing to be done
         return self.clone();
     }
+
     /// Returns true if this node is a Leaf
     fn is_leaf(&self) -> bool {
         match *self {
@@ -197,11 +337,24 @@ impl Rope {
             _ => false,
         }
     }
+
     /// Returns an iterator over the graphemes of this Rope
+    ///
+    /// # Examples
+    /// ```
+    /// use rope::Rope;
+    ///
+    /// let rope = Rope::new("a̐éö̲");
+    /// let mut iter = rope.graphemes();
+    /// assert_eq!(iter.next(), Some("a̐"));
+    /// assert_eq!(iter.next(), Some("é"));
+    /// assert_eq!(iter.next(), Some("ö̲"));
+    /// ```
     pub fn graphemes<'a>(&'a self) -> GraphemeIter<'a> {
         GraphemeIter { root: self, index: 0 }
     }
 }
+
 impl std::ops::Index<usize> for Rope {
     type Output = str;
 
@@ -209,10 +362,13 @@ impl std::ops::Index<usize> for Rope {
         self.get_nth_grapheme(_index).expect("rope index out of bounds")
     }
 }
+
+/// An iterator over the graphemes of a Rope
 pub struct GraphemeIter<'a> {
     root: &'a Rope,
     index: usize,
 }
+
 impl <'a> std::iter::Iterator for GraphemeIter<'a> {
     type Item = &'a str;
 
@@ -254,28 +410,15 @@ fn nth_grapheme_cluster(base: &str, nth_grapheme: usize) -> Option<&str> {
     UnicodeSegmentation::graphemes(base, true)
         .nth(nth_grapheme)
 }
-#[test]
-fn test_count_grapheme_clusters() {
-    // 11 bytes, 3 grapheme clusters
-    let s = "a̐éö̲";
-    assert_eq!(s.len(), 11);
-    assert_eq!(count_grapheme_clusters(s), 3);
-}
-
-#[test]
-fn test_grapheme_byte_index() {
-    let s = "a̐éö̲";
-    assert_eq!(grapheme_byte_index(s, 0).unwrap(), 0);
-    assert_eq!(grapheme_byte_index(s, 1).unwrap(), 3);
-    assert_eq!(grapheme_byte_index(s, 2).unwrap(), 6);
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use test::Bencher;
 
-    #[cfg(test)]
+    /// This is a simple utility for use during development,
+    /// it simply formats a Rope in a way that exposes the inner concat/leaf structure
+    #[allow(dead_code)]
     fn to_string_debug(root: &Rope) -> String {
         let mut buf = String::with_capacity(root.num_graphemes());
 
@@ -289,19 +432,17 @@ mod tests {
                 },
                 Rope::Concat { ref left, ref right, .. } => {
                     v.push( "(" );
-                    v.push_all(&str_parts(&left));
+                    v.extend( &str_parts(&left) );
                     v.push( ", " );
-                    v.push_all(&str_parts(&right));
+                    v.extend( &str_parts(&right) );
                     v.push( ")" );
                 },
             }
             v
         }
-
         for part in str_parts(root).iter() {
             buf.push_str(part);
         }
-
         buf
     }
 
@@ -312,6 +453,26 @@ mod tests {
 
     fn create_rope_1k() -> Rope {
         create_rope_1k_flat().fixup_lengths(50, 100)
+    }
+
+    #[test]
+    fn test_count_grapheme_clusters() {
+        use ::count_grapheme_clusters;
+        
+        // 11 bytes, 3 grapheme clusters
+        let s = "a̐éö̲";
+        assert_eq!(s.len(), 11);
+        assert_eq!(count_grapheme_clusters(s), 3);
+    }
+
+    #[test]
+    fn test_grapheme_byte_index() {
+        use ::grapheme_byte_index;
+        
+        let s = "a̐éö̲";
+        assert_eq!(grapheme_byte_index(s, 0).unwrap(), 0);
+        assert_eq!(grapheme_byte_index(s, 1).unwrap(), 3);
+        assert_eq!(grapheme_byte_index(s, 2).unwrap(), 6);
     }
 
     #[test]
@@ -348,10 +509,20 @@ mod tests {
             }
         }
 
+        fn find_min_leaf(root: &Rope) -> usize {
+            let len = root.num_graphemes();
+            if let Rope::Concat { ref left, ref right, .. } = *root {
+                ::std::cmp::min( find_min_leaf(&*left), find_min_leaf(&*right) )
+            } else {
+                len
+            }
+        }
+
         let rope = Rope::new("The quick brown fox jumps over the lazy dog.")
-            .fixup_lengths(2, 4);
+            .fixup_lengths(5, 10);
         assert_eq!(rope.num_graphemes(), 44);
-        assert!(find_max_leaf(&rope) <= 4);
+        assert!(find_max_leaf(&rope) <= 10);
+        assert!(find_min_leaf(&rope) >= 5);
     }
 
     #[test]
@@ -404,11 +575,28 @@ mod tests {
         assert_eq!(f.to_string(), "foo bar baz");
     }
 
+    #[test]
+    fn test_balance() {
+        let mut rope = Rope::new("Grumpy wizards make ")
+            .append("toxic")
+            .append(" brew for ")
+            .append("the evil Queen")
+            .append(" and ")
+            .append("Jack")
+            .append(".");
+
+        assert!(rope.get_balance() > 1.1 || rope.get_balance() < 0.9);
+
+        rope = rope.balance();
+
+        assert!(rope.get_balance() < 1.1 || rope.get_balance() > 0.9);
+    }
+
     #[bench]
     fn bench_create_1000(b: &mut Bencher) {
         let base: String = ::std::iter::repeat("a").take(1000).collect();
         b.iter(|| {
-            Rope::from_str(&base);
+            Rope::new(base.clone());
         });
     }
 
@@ -417,6 +605,14 @@ mod tests {
         let rope = create_rope_1k_flat();
         b.iter(|| {
             rope.fixup_lengths(100, 200);
+        });
+    }
+
+    #[bench]
+    fn bench_balance_1000(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| {
+            rope.balance();
         });
     }
 
@@ -469,5 +665,11 @@ mod tests {
     fn bench_to_string(b: &mut Bencher) {
         let rope = create_rope_1k();
         b.iter(|| rope.to_string() );
+    }
+
+    #[bench]
+    fn bench_iter_1000(b: &mut Bencher) {
+        let rope = create_rope_1k();
+        b.iter(|| for _ in rope.graphemes() { });
     }
 }
