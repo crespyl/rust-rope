@@ -174,7 +174,7 @@ impl Rope {
                        graphemes: graphemes }
     }
 
-    /// Insert a string into a Rope, after the nth grapheme.
+    /// Insert a string into a Rope, at the nth grapheme.
     /// Returns a new Rope, leaving the original unchanged.
     ///
     /// # Examples
@@ -223,7 +223,7 @@ impl Rope {
     /// use rope::Rope;
     ///
     /// let x = Rope::new("foobarbaz");
-    /// let y = x.delete(4, 3).unwrap();
+    /// let y = x.delete(3, 3).unwrap();
     /// assert_eq!(y.to_string(), "foobaz");
     /// ```
     pub fn delete(&self, start_grapheme: usize, num_graphemes: usize) -> Option<Rope> {
