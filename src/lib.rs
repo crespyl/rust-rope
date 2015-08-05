@@ -12,6 +12,14 @@ use std::rc::Rc;
 /// as a binary tree of `Leaf` and `Concat` nodes, supporting O(log n)
 /// implementations of most common operations (insert, delete, concat).  One
 /// drawback is that indexing individual characters also becomes O(log n).
+///
+/// This particular implementation is built to operate on the level of Unicode
+/// [grapheme clusters](http://unicode.org/reports/tr29/#Grapheme_Cluster_Boundaries),
+/// with the goal of making user level operations like "remove these three characters"
+/// more natural than having to constantly perform O(n) searches to find the
+/// cluster boundaries.  Because of this, all Rope operations that need an index
+/// expect a valid grapheme index, instead of a byte or "character" index, unless
+/// stated otherwise.
 
 #[derive(Clone)]
 pub enum Rope {
@@ -66,7 +74,7 @@ impl Rope {
         }
     }
 
-    /// Split a Rope after the nth (1-indexed) grapheme.
+    /// Divide a Rope into two at the nth (0-indexed) grapheme.
     /// Returns None if the grapheme index is 0 or out of bounds.
     ///
     /// # Examples
@@ -364,11 +372,15 @@ impl std::ops::Index<usize> for Rope {
 }
 
 /// An iterator over the graphemes of a Rope
+/// Use `Rope::graphemes` to get an instance.
 pub struct GraphemeIter<'a> {
     root: &'a Rope,
     index: usize,
 }
 
+// It would also be possible to implement this iterator with a stack, in order
+// to avoid calling `Rope::get_nth_grapheme` for every iteration, which may or
+// may not be more efficient.
 impl <'a> std::iter::Iterator for GraphemeIter<'a> {
     type Item = &'a str;
 
@@ -376,6 +388,11 @@ impl <'a> std::iter::Iterator for GraphemeIter<'a> {
         let res = self.root.get_nth_grapheme(self.index);
         self.index += 1;
         res
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.root.num_graphemes() - self.index;
+        (remaining, Some(remaining))
     }
 }
 
